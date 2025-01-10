@@ -1,0 +1,22 @@
+{
+    "C_Cpp.errorSquiggles": "disabled",
+    "files.associations": {
+        "iostream": "cpp",
+        "vector": "cpp",
+        "fstream": "cpp",
+        "sstream": "cpp",
+        "iosfwd": "cpp",
+        "xstring": "cpp",
+        "list": "cpp",
+        "format": "cpp",
+        "string": "cpp",
+        "xtree": "cpp",
+        "ostream": "cpp",
+        "xiosbase": "cpp",
+        "utility": "cpp",
+        "iterator": "cpp",
+        "xhash": "cpp",
+        "initializer_list": "cpp",
+        "xutility": "cpp"
+    }
+}
