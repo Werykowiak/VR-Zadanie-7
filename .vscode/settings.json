@@ -17,6 +17,8 @@
         "iterator": "cpp",
         "xhash": "cpp",
         "initializer_list": "cpp",
-        "xutility": "cpp"
+        "xutility": "cpp",
+        "locale": "cpp",
+        "xlocinfo": "cpp"
     }
 }

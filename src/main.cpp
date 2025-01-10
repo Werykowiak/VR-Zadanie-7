@@ -210,14 +210,27 @@ static void cursor_position_callback(GLFWwindow* window, double xpos, double ypo
         pitch = -89.0f;
 }
 
+void mat4x4_interpolate(mat4x4 result, const mat4x4& a, const mat4x4& b, float t) {
+    for (int i = 0; i < 16; ++i) {
+        result[0][i] = a[0][i] * (1.0f - t) + b[0][i] * t;
+    }
+}
+
+GLint mvp_location, mv_location, lightPos_location;
+
 class Node{
     public:
         unsigned int VAO,VBO, EBO;
-        mat4x4 transform;
+        mat4x4 currentTransform;
         vector<CompleteVertex> vertices;
         vector<unsigned int> indices; 
         vector<Node> children;
-        Node(){mat4x4_identity(transform);}
+        struct Keyframe {
+            mat4x4 transform;
+            float time; // Time at which this keyframe occurs
+        };
+        vector<Keyframe> keyframes;
+        Node(){mat4x4_identity(currentTransform);}
         Node(vector<CompleteVertex> vertices, vector<unsigned int> indices){
             this->vertices = vertices; 
             this->indices = indices;   
@@ -244,16 +257,73 @@ class Node{
 
             glBindBuffer(GL_ARRAY_BUFFER, 0);
             glBindVertexArray(0);
-            printf("node Created");
-            mat4x4_identity(transform);
+            printf("node Created\n");
+            mat4x4_identity(currentTransform);
         }
-        void Draw(){
+        void AddKeyframe(const mat4x4& transform, float time) {
+            Keyframe keyframe;
+            mat4x4_dup(keyframe.transform, transform);
+            keyframe.time = time;
+            keyframes.push_back(keyframe);
+        }
+        void Draw(mat4x4 p,mat4x4 lookat, mat4x4 parentTransform){
+            mat4x4 mv, mvp, globalTransform;
 
+            // Przemnóż transformację rodzica przez bieżącą transformację
+            mat4x4_mul(globalTransform, parentTransform, currentTransform);
+
+            // Oblicz MV i MVP
+            mat4x4_mul(mv, lookat, globalTransform);  // MV = LookAt * GlobalTransform
+            mat4x4_mul(mvp, p, mv);                            // MVP = Projection * MV
+
+            // Ustaw uniformy shaderów
+            glUniformMatrix4fv(mvp_location, 1, GL_FALSE, (const GLfloat*)mvp);
+            glUniformMatrix4fv(mv_location, 1, GL_FALSE, (const GLfloat*)mv);
+
+            // Rysuj bieżący obiekt
             glBindVertexArray(VAO);
             glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
             glBindVertexArray(0);
-            for(size_t i = 0; i < children.size(); ++i){
-                children[i].Draw();
+
+            // Rysuj dzieci, przekazując globalną transformację
+            for (size_t i = 0; i < children.size(); ++i) {
+                children[i].Draw(p,lookat, globalTransform);
+            }
+        }
+        void InterpolateKeyframes(float currentTime) {
+            if (keyframes.empty()){
+                for (auto& child : children) {
+                    child.InterpolateKeyframes(currentTime);
+                }
+                return;
+            } 
+
+            // Znajdź dwie klatki kluczowe do interpolacji
+            Keyframe* kf1 = nullptr;
+            Keyframe* kf2 = nullptr;
+
+            for (size_t i = 0; i < keyframes.size(); ++i) {
+                if (keyframes[i].time >= currentTime) {
+                    kf2 = &keyframes[i];
+                    if (i > 0) kf1 = &keyframes[i - 1];
+                    break;
+                }
+            }
+
+            if (!kf1 || !kf2) {
+                // Użyj pierwszej lub ostatniej klatki kluczowej, jeśli czas jest poza zakresem
+                mat4x4_dup(currentTransform, kf1 ? kf1->transform : keyframes.back().transform);
+            } else {
+                // Oblicz współczynnik interpolacji `t`
+                float t = (currentTime - kf1->time) / (kf2->time - kf1->time);
+
+                // Interpoluj macierze transformacji
+                mat4x4_interpolate(currentTransform, kf1->transform, kf2->transform, t);
+            }
+
+            // Rekurencyjne propagowanie do dzieci
+            for (auto& child : children) {
+                child.InterpolateKeyframes(currentTime);
             }
         }
         ~Node() {
@@ -376,7 +446,7 @@ int main(void)
 
     GLFWwindow* window;
     GLuint vertex_buffer, vertex_shader, fragment_shader, program;
-    GLint mvp_location, apos_location, aNormals_location,mv_location,lightPos_location,texCoord_location;
+    GLint apos_location, aNormals_location,texCoord_location;
 
     srand(time(NULL));
 
@@ -430,7 +500,8 @@ int main(void)
     lacznik->children.push_back(*lufa);
     wieza->children.push_back(*lacznik);
     kadlub->children.push_back(*wieza);
-    
+
+
 
     //Shader
     vertex_shader = glCreateShader(GL_VERTEX_SHADER);
@@ -498,8 +569,33 @@ int main(void)
     }
     stbi_image_free(img1);
 
+    mat4x4 kf1, kf2, kf3, l1,l2,l3;
+    mat4x4_identity(kf1);                  
+    mat4x4_rotate_Y(kf2, kf1, M_PI / 2.0f);     
+    mat4x4_rotate_Y(kf3, kf1, M_PI);           
+
+    kadlub->children[0].AddKeyframe(kf1, 0.0f);              
+    kadlub->children[0].AddKeyframe(kf2, 2.0f);              
+    kadlub->children[0].AddKeyframe(kf3, 4.0f);
+
+    mat4x4 kf1_lufa, kf2_lufa, kf3_lufa;
+    mat4x4_identity(kf1_lufa);              
+    mat4x4_translate(kf2_lufa, 0.0f, 0.1f, 0.0f);   
+    mat4x4_identity(kf3_lufa);                 
+
+    kadlub->children[0].children[0].AddKeyframe(kf1_lufa, 0.0f);
+    kadlub->children[0].children[0].AddKeyframe(kf2_lufa, 1.0f); 
+    kadlub->children[0].children[0].AddKeyframe(kf3_lufa, 2.0f);  
+
+    float animationTime = 0.0f;  
+    float animationDuration = 4.0f;    
+
     while (!glfwWindowShouldClose(window))
     {
+        animationTime += 0.016f;
+        if (animationTime > animationDuration) animationTime -= animationDuration;
+
+        kadlub->InterpolateKeyframes(animationTime);
 
         float ratio;
         int width, height;
@@ -507,6 +603,7 @@ int main(void)
         glfwGetFramebufferSize(window, &width, &height);
         ratio = width / (float) height;
         glViewport(0, 0, width, height);
+
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -588,27 +685,23 @@ int main(void)
         float fovRadians = fov * (M_PI / 180.0f);
         mat4x4_perspective(p,fovRadians,ratio,0.1f,1000.0f);
         mat4x4_identity(m);
-        mat4x4_mul(mv,lookat,  m);
-        mat4x4_mul(mvp, p, lookat);
-        mat4x4_mul(mvp, mvp, m);
+        
         
         glUseProgram(program);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, texture); 
         glUniform1i(glGetUniformLocation(program, "texture1"), 0);
-        printf("Camera Position: x = %f, y = %f, z = %f\n", cameraPos[0], cameraPos[1], cameraPos[2]);
-        glUniformMatrix4fv(mvp_location, 1, GL_FALSE, (const GLfloat*) mvp);
-        glUniformMatrix4fv(mv_location, 1, GL_FALSE, (const GLfloat*) mv);
         glUniform3fv(lightPos_location, 1, (const GLfloat*) lightPosition);
 
         //wieza->Draw();
-        kadlub->Draw();
+        mat4x4 identity;
+        mat4x4_identity(identity);
+        kadlub->Draw(p,lookat, identity);
         //lufa->Draw();
         //lacznik->Draw();
 
 
         glBindVertexArray(0);
-
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
